@@ -8,6 +8,7 @@ from watch_api.config import settings
 
 
 class DatabaseConnectionError(RuntimeError):
+    # Raised as a domain error so FastAPI can return a clean 503 response.
     pass
 
 
@@ -20,6 +21,7 @@ def get_connection() -> Iterator[pymysql.connections.Connection]:
         port = settings.sql_port
 
         if settings.ssh_host:
+            # SSH is optional. Local MySQL remains the default path for simple development.
             from sshtunnel import SSHTunnelForwarder
 
             tunnel = SSHTunnelForwarder(
@@ -32,6 +34,7 @@ def get_connection() -> Iterator[pymysql.connections.Connection]:
             host = "127.0.0.1"
             port = tunnel.local_bind_port
 
+        # DictCursor keeps service code readable: rows are addressed by column name.
         connection = pymysql.connect(
             host=host,
             port=port,
@@ -47,11 +50,13 @@ def get_connection() -> Iterator[pymysql.connections.Connection]:
         yield connection
     except Exception as exc:
         mode = "SSH tunnel" if settings.ssh_host else "direct MySQL"
+        # Do not leak passwords or SSH details into API responses.
         raise DatabaseConnectionError(
             f"Cannot connect to database using {mode}: "
             f"{settings.sql_hostname}:{settings.sql_port}, database={settings.sql_database}"
         ) from exc
     finally:
+        # Close both resources even if query execution fails midway.
         if connection is not None:
             connection.close()
         if tunnel is not None:

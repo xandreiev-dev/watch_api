@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from watch_api.db import get_connection
 
 
+# Only these fields are allowed to escape raw_payload_json into the public response.
 RAW_EXTRA_FIELDS = (
     "battery_life_gps",
     "battery_life_training",
@@ -25,7 +26,10 @@ RAW_EXTRA_FIELDS = (
     "ios_compatible",
 )
 
+# Names like Standard or Base are not real variants for the card UI.
 HIDDEN_VARIANT_NAMES = {"standard", "default", "base"}
+
+# Samsung pages can mix nearby model sizes, so these models get an explicit guardrail.
 SAMSUNG_MODEL_SIZE_WHITELIST = {
     "galaxywatch6": {40.0, 44.0},
     "galaxywatch7": {40.0, 44.0},
@@ -34,6 +38,7 @@ SAMSUNG_MODEL_SIZE_WHITELIST = {
 
 
 def get_card_by_model_id(model_id: int) -> dict[str, Any]:
+    # Public endpoint path: fetch model, fetch its variants, then build the same card shape.
     model = _fetch_model_by_id(model_id)
     if model is None:
         raise HTTPException(status_code=404, detail="Watch model not found")
@@ -46,6 +51,7 @@ def get_card_by_model_id(model_id: int) -> dict[str, Any]:
 
 
 def get_card_by_name(brand: str, normalized_name: str) -> dict[str, Any]:
+    # Case-insensitive lookup used by the fuzzy demo UI once it has guessed brand and model.
     model = _fetch_model_by_name(brand, normalized_name)
     if model is None:
         raise HTTPException(status_code=404, detail="Watch model not found")
@@ -58,6 +64,7 @@ def get_card_by_name(brand: str, normalized_name: str) -> dict[str, Any]:
 
 
 def search_cards(q: str | None, brand: str | None, limit: int) -> list[dict[str, Any]]:
+    # Search stays lightweight: enough data for autocomplete, not a full product card.
     normalized_limit = max(1, min(limit, 100))
     models = _search_models(q, brand, normalized_limit)
 
@@ -83,6 +90,11 @@ def search_cards(q: str | None, brand: str | None, limit: int) -> list[dict[str,
 
 
 def build_watch_card(model: dict[str, Any], variants: list[dict[str, Any]]) -> dict[str, Any]:
+    # Build pipeline:
+    # 1. remove unusable/parser-only variants,
+    # 2. collapse duplicates,
+    # 3. choose the best main variant,
+    # 4. return stable frontend blocks.
     response_variants = prepare_response_variants(model, variants)
     if not response_variants:
         raise HTTPException(status_code=404, detail="Usable watch variants not found")
@@ -92,6 +104,7 @@ def build_watch_card(model: dict[str, Any], variants: list[dict[str, Any]]) -> d
     main_variant = choose_main_variant(response_variants)
     main_variant_id = _int_or_zero(main_variant.get("id"))
     response_variants = _filter_useful_response_variants(model, main_variant, response_variants)
+    # Main variant is always shown first; the rest follow the display sort key.
     sorted_variants = sorted(
         response_variants,
         key=lambda variant: (
@@ -100,6 +113,7 @@ def build_watch_card(model: dict[str, Any], variants: list[dict[str, Any]]) -> d
         ),
     )
     title = build_model_title(model.get("brand"), model.get("model_name"))
+    # Prefer the clean model value, then raw specs, then a small hardcoded fallback for known gaps.
     water_resistance = (
         _normalize_water_resistance(model.get("water_resistance"))
         or _extract_water_resistance_from_raw(main_variant.get("raw_payload_json"))
@@ -184,6 +198,7 @@ def build_watch_card(model: dict[str, Any], variants: list[dict[str, Any]]) -> d
 
 
 def choose_main_variant(variants: list[dict[str, Any]]) -> dict[str, Any]:
+    # max() with a detailed sort key keeps the decision deterministic and easy to test.
     return max(variants, key=_main_variant_sort_key)
 
 
@@ -191,6 +206,7 @@ def prepare_response_variants(
     model: dict[str, Any],
     variants: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # First pass: remove obvious junk and keep the best row for each database/business identity.
     best_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
     for variant in variants:
         if _is_junk_variant(model, variant):
@@ -203,6 +219,7 @@ def prepare_response_variants(
 
 
 def _prune_response_variants(model: dict[str, Any], variants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Second pass: hide variants that technically exist but do not make the card better.
     usable = [variant for variant in variants if not _is_low_value_response_variant(model, variant)]
     if not usable:
         usable = variants
@@ -212,6 +229,7 @@ def _prune_response_variants(model: dict[str, Any], variants: list[dict[str, Any
 
     best_by_display_key: dict[tuple[Any, ...], dict[str, Any]] = {}
     for variant in usable:
+        # Display identity is looser than DB identity; it catches visible duplicates in the UI.
         key = _display_variant_key(model, variant)
         current = best_by_display_key.get(key)
         if current is None or _dedupe_variant_sort_key(variant) > _dedupe_variant_sort_key(current):
@@ -220,6 +238,7 @@ def _prune_response_variants(model: dict[str, Any], variants: list[dict[str, Any
 
 
 def _is_low_value_response_variant(model: dict[str, Any], variant: dict[str, Any]) -> bool:
+    # Low score is allowed only when the row is still the only useful canonical fallback.
     effective_score = _effective_quality_score(model, variant)
     if effective_score <= 0 and _int_or_zero(variant.get("is_canonical")) != 1:
         return True
@@ -229,6 +248,7 @@ def _is_low_value_response_variant(model: dict[str, Any], variant: dict[str, Any
 
 
 def _display_variant_key(model: dict[str, Any], variant: dict[str, Any]) -> tuple[Any, ...]:
+    # If two variants would look the same to a user, keep only the fuller one.
     return (
         _variant_key_value(variant, "case_size_mm_key", "case_size_mm"),
         _identity_text(_visible_variant_name(model, variant.get("variant_name"))) or "__base__",
@@ -238,6 +258,7 @@ def _display_variant_key(model: dict[str, Any], variant: dict[str, Any]) -> tupl
 
 
 def build_model_title(brand: Any, model_name: Any) -> str:
+    # Avoid titles like "Apple Apple Watch Series 9".
     brand_text = str(_clean_value(brand) or "").strip()
     model_text = str(_clean_value(model_name) or "").strip()
 
@@ -251,6 +272,7 @@ def build_model_title(brand: Any, model_name: Any) -> str:
 
 
 def build_variant_display_name(model: dict[str, Any], variant_name: Any) -> str:
+    # Variant text is appended only after removing duplicated model words.
     title = build_model_title(model.get("brand"), model.get("model_name"))
     variant_text = _visible_variant_name(model, variant_name)
     if not variant_text:
@@ -259,6 +281,7 @@ def build_variant_display_name(model: dict[str, Any], variant_name: Any) -> str:
 
 
 def extract_raw_extra(raw_payload_json: Any) -> dict[str, Any]:
+    # Raw payload can be large and noisy, so only a curated allow-list reaches the API.
     payload = _parse_raw_payload(raw_payload_json)
     if not isinstance(payload, dict):
         return {}
@@ -273,6 +296,7 @@ def extract_raw_extra(raw_payload_json: Any) -> dict[str, Any]:
 
 
 def _fetch_model_by_id(model_id: int) -> dict[str, Any] | None:
+    # Keep SQL explicit so new fields added to the card are reviewed deliberately.
     sql = """
         SELECT
             id, brand, model_name, normalized_name, announce_date, os, cpu, gpu,
@@ -288,6 +312,7 @@ def _fetch_model_by_id(model_id: int) -> dict[str, Any] | None:
 
 
 def _fetch_model_by_name(brand: str, normalized_name: str) -> dict[str, Any] | None:
+    # The database can keep original casing; API lookups should not care about it.
     sql = """
         SELECT
             id, brand, model_name, normalized_name, announce_date, os, cpu, gpu,
@@ -305,6 +330,7 @@ def _fetch_model_by_name(brand: str, normalized_name: str) -> dict[str, Any] | N
 
 
 def _fetch_variants(model_id: int) -> list[dict[str, Any]]:
+    # Pull all fields the card builder may need, but expose only selected values later.
     sql = """
         SELECT
             id, watch_model_id, variant_name, case_size_mm, case_material,
@@ -332,6 +358,7 @@ def _fetch_variants(model_id: int) -> list[dict[str, Any]]:
 
 
 def _search_models(q: str | None, brand: str | None, limit: int) -> list[dict[str, Any]]:
+    # Search is intentionally simple SQL LIKE; heavier fuzzy logic belongs in the UI for now.
     where_clauses: list[str] = []
     params: list[Any] = []
 
@@ -369,6 +396,7 @@ def _build_main_variant(
     variant: dict[str, Any],
     is_canonical: bool,
 ) -> dict[str, Any]:
+    # Main variant carries source metadata because it explains where the card came from.
     return {
         "id": variant["id"],
         "variant_name": _visible_variant_name(model, variant.get("variant_name")),
@@ -386,6 +414,7 @@ def _build_variant_summary(
     variant: dict[str, Any],
     is_canonical: bool,
 ) -> dict[str, Any]:
+    # Variant summaries stay compact; full card blocks are built from the chosen main variant.
     return {
         "id": variant["id"],
         "variant_name": _visible_variant_name(model, variant.get("variant_name")),
@@ -401,6 +430,7 @@ def _build_variant_summary(
 
 
 def _visible_variant_name(model: dict[str, Any], value: Any) -> str | None:
+    # Strip repeated model prefixes until names like "Watch Series 9 Watch Series 9 41mm" are clean.
     cleaned = _clean_value(value)
     if cleaned is None:
         return None
@@ -419,6 +449,7 @@ def _visible_variant_name(model: dict[str, Any], value: Any) -> str | None:
 
 
 def _variant_name_prefixes(model: dict[str, Any]) -> list[str]:
+    # Try the full public title first, then raw model fields that can appear in parser output.
     return [
         str(value).strip()
         for value in (
@@ -431,6 +462,7 @@ def _variant_name_prefixes(model: dict[str, Any]) -> list[str]:
 
 
 def _strip_text_prefix(text: str, prefix: str) -> str:
+    # Match only a real prefix boundary; do not remove words from the middle of variant names.
     if not prefix:
         return text
     pattern = rf"^\s*{re.escape(prefix)}(?:\s+|[-+/,_]+|$)"
@@ -439,6 +471,7 @@ def _strip_text_prefix(text: str, prefix: str) -> str:
 
 
 def _variant_identity_key(model: dict[str, Any], variant: dict[str, Any]) -> tuple[Any, ...]:
+    # This key represents the technical identity of a variant before UI-level cleanup.
     key = (
         _variant_key_value(variant, "case_size_mm_key", "case_size_mm"),
         _variant_key_value(variant, "case_material_key", "case_material"),
@@ -448,6 +481,7 @@ def _variant_identity_key(model: dict[str, Any], variant: dict[str, Any]) -> tup
         _variant_key_value(variant, "lte_key", "lte"),
     )
     if _identity_text(model.get("brand")) == "samsung":
+        # Samsung duplicate rows often differ only by noisy variant_name values.
         return key
     return ((_identity_text(_visible_variant_name(model, variant.get("variant_name"))) or "__base__"), *key)
 
@@ -459,6 +493,7 @@ def _variant_key_value(variant: dict[str, Any], key_field: str, fallback_field: 
 
 
 def _connectivity_key_value(model: dict[str, Any], variant: dict[str, Any]) -> str:
+    # Samsung LTE rows can arrive as LTE-only or GPS+LTE; for dedupe they are the same product class.
     normalized = _normalize_connectivity_type(variant)
     if _identity_text(model.get("brand")) == "samsung" and normalized in {"lte", "gps+lte"}:
         return "gpslte"
@@ -466,6 +501,7 @@ def _connectivity_key_value(model: dict[str, Any], variant: dict[str, Any]) -> s
 
 
 def _is_junk_variant(model: dict[str, Any], variant: dict[str, Any]) -> bool:
+    # Hard filters for rows that should never reach the card response.
     if _is_zero_quality_junk(model, variant):
         return True
     if _identity_text(_clean_value(variant.get("connectivity_type"))) == "gsmarenastub":
@@ -482,6 +518,7 @@ def _is_junk_variant(model: dict[str, Any], variant: dict[str, Any]) -> bool:
 
 
 def _is_zero_quality_junk(model: dict[str, Any], variant: dict[str, Any]) -> bool:
+    # Garmin.ru sometimes has score 0 despite useful specs, so non-Samsung rows get a second look.
     if _int_or_zero(variant.get("quality_score")) > 0:
         return False
     if _identity_text(model.get("brand")) == "samsung":
@@ -496,6 +533,7 @@ def _is_zero_quality_junk(model: dict[str, Any], variant: dict[str, Any]) -> boo
 
 
 def _is_expected_model_size(model: dict[str, Any], variant: dict[str, Any]) -> bool:
+    # Prevent known Samsung cross-model sizes from leaking into nearby watch generations.
     brand = _identity_text(model.get("brand"))
     if brand != "samsung":
         return True
@@ -513,6 +551,7 @@ def _filter_useful_response_variants(
     main_variant: dict[str, Any],
     variants: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # Final response pass: always keep main, then drop variants that add no visible choice.
     filtered: list[dict[str, Any]] = []
     main_id = _int_or_zero(main_variant.get("id"))
     for variant in variants:
@@ -530,6 +569,7 @@ def _is_redundant_with_main(
     main_variant: dict[str, Any],
     variant: dict[str, Any],
 ) -> bool:
+    # A variant is redundant when it is weaker and does not change size/material/connectivity.
     main_size = _float_value(main_variant.get("case_size_mm"))
     variant_size = _float_value(variant.get("case_size_mm"))
     same_size = main_size is not None and variant_size is not None and main_size == variant_size
@@ -560,6 +600,7 @@ def _is_redundant_with_main(
     if _identity_text(model.get("brand")) != "samsung":
         return False
 
+    # Samsung data has more duplicate sources, so same-looking rows get trimmed more aggressively.
     if (
         _visible_variant_name(model, main_variant.get("variant_name")) is None
         and _visible_variant_name(model, variant.get("variant_name")) is None
@@ -574,12 +615,14 @@ def _is_redundant_with_main(
 
 
 def _empty_or_same(main_value: Any, variant_value: Any) -> bool:
+    # Empty values are treated as "not a useful difference" for duplicate cleanup.
     main_text = _identity_text(main_value)
     variant_text = _identity_text(variant_value)
     return not variant_text or not main_text or main_text == variant_text
 
 
 def _connectivity_redundant_with_main(main_variant: dict[str, Any], variant: dict[str, Any]) -> bool:
+    # GPS is considered covered by GPS+LTE; unknown connectivity is not a reason to keep a row.
     main_type = _normalize_connectivity_type(main_variant)
     variant_type = _normalize_connectivity_type(variant)
     if variant_type is None:
@@ -592,6 +635,7 @@ def _connectivity_redundant_with_main(main_variant: dict[str, Any], variant: dic
 
 
 def _dedupe_variant_sort_key(variant: dict[str, Any]) -> tuple[int, int, int, int, int, int, datetime, int]:
+    # Higher is better. Completeness beats raw quality when choosing between duplicates.
     return (
         _has_value(_battery_life_value(variant)),
         _variant_completeness_score(variant),
@@ -605,6 +649,7 @@ def _dedupe_variant_sort_key(variant: dict[str, Any]) -> tuple[int, int, int, in
 
 
 def _main_variant_sort_key(variant: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int, datetime, int]:
+    # This mirrors how a real product card is judged: source, image, specs, then score.
     return (
         _has_value(variant.get("source_url")),
         _has_value(variant.get("image_url")),
@@ -621,6 +666,7 @@ def _main_variant_sort_key(variant: dict[str, Any]) -> tuple[int, int, int, int,
 
 
 def _variant_response_sort_key(variant: dict[str, Any]) -> tuple[int, int, float, str, int]:
+    # Stable order keeps API diffs small and makes frontend rendering predictable.
     return (
         -_int_or_zero(variant.get("is_canonical")),
         -_int_or_zero(variant.get("quality_score")),
@@ -631,6 +677,7 @@ def _variant_response_sort_key(variant: dict[str, Any]) -> tuple[int, int, float
 
 
 def _parse_raw_payload(raw_payload_json: Any) -> Any:
+    # Parser output may be dict, bytes, string JSON, empty, or malformed.
     if raw_payload_json is None:
         return None
     if isinstance(raw_payload_json, dict):
@@ -646,6 +693,7 @@ def _parse_raw_payload(raw_payload_json: Any) -> Any:
 
 
 def _find_raw_value(payload: dict[str, Any], field: str) -> Any:
+    # Support both current parser layout and older flat payloads.
     for container in (
         payload,
         payload.get("normalized_specs"),
@@ -657,6 +705,7 @@ def _find_raw_value(payload: dict[str, Any], field: str) -> Any:
 
 
 def _clean_value(value: Any) -> Any:
+    # The database may contain SQL NULL or string "NULL"; the API exposes both as JSON null.
     if value is None:
         return None
     if isinstance(value, str):
@@ -672,6 +721,7 @@ def _has_value(value: Any) -> int:
 
 
 def _has_display_data(variant: dict[str, Any]) -> int:
+    # Any display hint is useful for scoring, even if the full display block is not complete yet.
     return 1 if any(
         _clean_value(variant.get(field)) is not None
         for field in ("display_size_inch", "display_size_raw", "display_resolution")
@@ -684,6 +734,7 @@ def _has_normal_connectivity(variant: dict[str, Any]) -> int:
 
 
 def _variant_completeness_score(variant: dict[str, Any]) -> int:
+    # A rough completeness score is enough for ranking; it is not written back to the database.
     fields = (
         "case_size_mm",
         "case_material",
@@ -722,6 +773,7 @@ def _variant_completeness_score(variant: dict[str, Any]) -> int:
 
 
 def _connectivity_rank(variant: dict[str, Any]) -> int:
+    # Prefer richer connectivity when other quality signals are close.
     normalized = _normalize_connectivity_type(variant)
     if normalized == "gps+lte":
         return 4
@@ -737,6 +789,7 @@ def _connectivity_rank(variant: dict[str, Any]) -> int:
 
 
 def _normalize_connectivity_type(variant: dict[str, Any]) -> str | None:
+    # Normalize parser-specific labels into the small set the frontend understands.
     raw = str(_clean_value(variant.get("connectivity_type")) or "").casefold()
     raw_key = _identity_text(raw)
     has_gps = _yn_bool(variant.get("gps")) is True or "gps" in raw_key
@@ -751,6 +804,7 @@ def _normalize_connectivity_type(variant: dict[str, Any]) -> str | None:
     if raw_key in {"gps", "bluetooth", "gpsbluetooth"} and (
         not has_lte or "garmin" in source_key
     ):
+        # Garmin often calls Bluetooth/GPS watches "GPS"; do not turn them into LTE by accident.
         if raw_key == "gpsbluetooth":
             return "gps+bluetooth"
         return raw_key
@@ -768,6 +822,7 @@ def _normalize_connectivity_type(variant: dict[str, Any]) -> str | None:
 
 
 def _normalize_water_resistance(value: Any) -> str | None:
+    # Keep the value human-readable and remove parser leftovers like "NULL" or duplicated meters.
     cleaned = _clean_value(value)
     if cleaned is None:
         return None
@@ -779,6 +834,7 @@ def _normalize_water_resistance(value: Any) -> str | None:
         text = atm_in_parentheses.group(1)
 
     def replace_meter(match: re.Match[str]) -> str:
+        # The common watch convention is 10 meters per 1 ATM.
         meters = int(match.group(1))
         if meters % 10 == 0:
             return f"{meters // 10} ATM"
@@ -805,6 +861,7 @@ def _card_incomplete_warnings(
     water_resistance: str | None,
     battery_life: str | None,
 ) -> list[str]:
+    # Warnings describe data gaps without preventing the card from rendering.
     warnings: list[str] = []
     required_checks = {
         "image_url": _clean_value(variant.get("image_url")) is not None,
@@ -822,12 +879,14 @@ def _card_incomplete_warnings(
             warnings.append(f"missing_{key}")
 
     if _identity_text(model.get("brand")) == "amazfit" and _identity_text(model.get("normalized_name")) == "trex3pro":
+        # This model was seen with too little data for a production-ready card.
         if warnings:
             warnings.insert(0, "not_production_ready")
     return warnings
 
 
 def _is_card_incomplete_for_ui(model: dict[str, Any], warnings: list[str]) -> bool:
+    # Only serious gaps get the public incomplete badge; minor missing fields stay as warnings.
     warning_set = set(warnings)
     if "not_production_ready" in warning_set:
         return True
@@ -845,6 +904,7 @@ def _is_card_incomplete_for_ui(model: dict[str, Any], warnings: list[str]) -> bo
 
 
 def _extract_water_resistance_from_raw(raw_payload_json: Any) -> str | None:
+    # Some sources bury IP/ATM/MIL-STD values in raw specs instead of the model column.
     payload = _parse_raw_payload(raw_payload_json)
     if not isinstance(payload, dict):
         return None
@@ -867,12 +927,14 @@ def _extract_water_resistance_from_raw(raw_payload_json: Any) -> str | None:
 
 
 def _model_water_resistance_fallback(model: dict[str, Any]) -> str | None:
+    # Small explicit fallback for a known source gap, kept here so it is visible and easy to remove.
     if _identity_text(model.get("brand")) == "samsung" and _identity_text(model.get("normalized_name")) == "galaxywatchultra":
         return "10 ATM, IP68, MIL-STD-810H"
     return None
 
 
 def _collect_raw_values(payload: Any, key_fragments: tuple[str, ...]) -> list[Any]:
+    # Recursive scan for old/new raw payload layouts without exposing the whole payload.
     values: list[Any] = []
     if isinstance(payload, dict):
         for key, value in payload.items():
@@ -887,6 +949,7 @@ def _collect_raw_values(payload: Any, key_fragments: tuple[str, ...]) -> list[An
 
 
 def _display_size_inch(variant: dict[str, Any]) -> float | int | None:
+    # display_size_raw wins because parsed numeric values can be rounded or truncated.
     raw_value = _clean_value(variant.get("display_size_raw"))
     if raw_value is not None:
         match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:\"|inch|in\b)", str(raw_value), flags=re.IGNORECASE)
@@ -896,6 +959,7 @@ def _display_size_inch(variant: dict[str, Any]) -> float | int | None:
 
 
 def _battery_life_value(variant: dict[str, Any]) -> str | None:
+    # Prefer the normalized DB field; fall back to raw parser text for Garmin.ru rows.
     db_value = _clean_value(variant.get("battery_life"))
     if db_value is not None:
         return str(db_value)
@@ -909,6 +973,7 @@ def _battery_life_value(variant: dict[str, Any]) -> str | None:
 
 
 def _normalize_battery_life(value: Any) -> str | None:
+    # Keep backend output simple; the demo UI handles user-facing Russian formatting.
     text = str(value).strip()
     smartwatch_match = re.search(
         r"(?:режим\s+)?смарт-часов\s*:\s*до\s*(\d+)\s*(дн(?:я|ей)|day|days)",
@@ -927,6 +992,7 @@ def _normalize_battery_life(value: Any) -> str | None:
 
 
 def _effective_quality_score(model: dict[str, Any], variant: dict[str, Any]) -> int:
+    # Garmin.ru imports can have DB quality_score=0 even when the row is clearly useful.
     db_score = _int_or_zero(variant.get("quality_score"))
     if db_score > 0:
         return db_score
@@ -947,6 +1013,7 @@ def _effective_quality_score(model: dict[str, Any], variant: dict[str, Any]) -> 
 
 
 def _identity_text(value: Any) -> str:
+    # Compact text key for comparing names, brands, and parser labels.
     cleaned = _clean_value(value)
     if cleaned is None:
         return ""
@@ -954,6 +1021,7 @@ def _identity_text(value: Any) -> str:
 
 
 def _serialize_value(value: Any) -> Any:
+    # Convert database-native values into JSON-friendly primitives.
     cleaned = _clean_value(value)
     if isinstance(cleaned, (datetime, date)):
         return cleaned.isoformat()
@@ -972,6 +1040,7 @@ def _text_value(value: Any) -> str | None:
 
 
 def _yn_bool(value: Any) -> bool | None:
+    # Convert the current Y/N format while still accepting common boolean-like values.
     cleaned = _clean_value(value)
     if cleaned is None:
         return None
@@ -988,6 +1057,7 @@ def _yn_bool(value: Any) -> bool | None:
 
 
 def _connectivity_bool(variant: dict[str, Any], field: str) -> bool | None:
+    # Avoid exposing stale LTE/eSIM truthy values when normalized connectivity says otherwise.
     normalized = _normalize_connectivity_type(variant)
     if field in {"lte", "esim"} and normalized not in {"lte", "gps+lte"}:
         return False
@@ -1016,6 +1086,7 @@ def _float_value(value: Any) -> float | None:
 
 
 def _datetime_or_min(value: Any) -> datetime:
+    # A missing date should lose freshness comparisons, not break sorting.
     if isinstance(value, datetime):
         return value
     if isinstance(value, date):

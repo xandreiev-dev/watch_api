@@ -11,6 +11,7 @@ from watch_api.services.watch_card_service import (
 )
 
 
+# The tests use plain dictionaries that look like DB rows, so service logic can be checked without MySQL.
 def test_choose_main_variant_prefers_complete_lte_variant_over_db_canonical_flag():
     variants = [
         {
@@ -78,6 +79,7 @@ def test_extract_raw_extra_only_allowed_fields():
 
 
 def test_build_watch_card_shape_and_variant_sorting():
+    # This is the broad shape test: it guards the public response contract.
     model = {
         "id": 123,
         "brand": "Garmin",
@@ -189,6 +191,7 @@ def test_build_watch_card_serializes_numeric_model_memory_fields_as_text():
 
 
 def test_model_name_variant_is_hidden_and_duplicate_variant_is_collapsed():
+    # Amazfit Active 2 exposed the classic duplicate-name problem: model name was stored as variant name.
     model = {
         "id": 300,
         "brand": "Amazfit",
@@ -267,6 +270,7 @@ def test_model_name_variant_is_hidden_and_duplicate_variant_is_collapsed():
 
 
 def test_only_main_variant_is_canonical_and_connectivity_is_normalized():
+    # The API response must expose only one canonical variant even if the DB has several.
     model = {
         "id": 400,
         "brand": "Apple",
@@ -326,6 +330,7 @@ def test_only_main_variant_is_canonical_and_connectivity_is_normalized():
 
 
 def test_samsung_junk_variants_are_filtered_and_display_raw_wins():
+    # Samsung rows are noisy, so this keeps size guards, stub filtering, and display parsing covered.
     model = {
         "id": 297,
         "brand": "Samsung",
@@ -393,6 +398,7 @@ def test_samsung_junk_variants_are_filtered_and_display_raw_wins():
 
 
 def test_non_samsung_zero_quality_canonical_placeholder_is_usable():
+    # Some older imports only have a minimal canonical row; that should still render a basic card.
     model = {
         "id": 99,
         "brand": "Garmin",
@@ -429,6 +435,7 @@ def test_non_samsung_zero_quality_canonical_placeholder_is_usable():
 
 
 def test_garmin_ru_zero_db_score_gets_effective_quality_and_battery_from_raw():
+    # Garmin.ru can provide usable specs while quality_score is still zero in the database.
     model = {
         "id": 89,
         "brand": "Garmin",

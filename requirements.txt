@@ -1,6 +1,11 @@
+# API server
 fastapi
 uvicorn
+
+# MySQL connection and local environment loading
 pymysql
 python-dotenv
-pytest
 sshtunnel
+
+# Local checks
+pytest

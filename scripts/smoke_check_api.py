@@ -11,10 +11,12 @@ BASE_URL = "http://127.0.0.1:8000"
 
 @dataclass(frozen=True)
 class WatchLookup:
+    # A tiny fixture for the public by-name endpoint.
     brand: str
     normalized_name: str
 
 
+# These models cover the main parser sources and the brands that tend to regress first.
 WATCHES = (
     WatchLookup("Garmin", "fenix 7"),
     WatchLookup("Garmin", "venu 2"),
@@ -29,11 +31,13 @@ WATCHES = (
 
 
 def fetch_json(path: str) -> dict:
+    # Keep the script dependency-free; urllib is enough for this local smoke check.
     with urlopen(f"{BASE_URL}{path}", timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def check_api_is_running() -> bool:
+    # Fail early with a helpful command when the developer forgot to start uvicorn.
     try:
         health = fetch_json("/health")
     except HTTPError as exc:
@@ -52,6 +56,7 @@ def check_api_is_running() -> bool:
 
 
 def check_card(card: dict) -> tuple[list[str], list[str]]:
+    # Required fields block card rendering; warnings are allowed data gaps from the DB.
     missing: list[str] = []
     warnings: list[str] = []
     if not card.get("title"):
@@ -71,6 +76,7 @@ def check_card(card: dict) -> tuple[list[str], list[str]]:
 
 
 def main() -> int:
+    # The script is intentionally tolerant: a few incomplete DB records should not block local work.
     if not check_api_is_running():
         return 2
 

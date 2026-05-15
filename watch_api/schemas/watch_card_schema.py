@@ -3,6 +3,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# Pydantic schemas document the public API shape and catch accidental type drift.
 class WatchModelSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -98,6 +99,7 @@ class WatchSourceSchema(BaseModel):
 
 
 class WatchCardSchema(BaseModel):
+    # Main card response. Blocks are always present so the frontend can render safely.
     model: WatchModelSchema
     title: str
     image: WatchImageSchema
@@ -117,6 +119,7 @@ class WatchCardSchema(BaseModel):
 
 
 class WatchSearchItemSchema(BaseModel):
+    # Compact search result used before a full card is loaded.
     id: int
     brand: str | None = None
     model_name: str | None = None

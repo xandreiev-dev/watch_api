@@ -1,4 +1,5 @@
 :root {
+  /* The demo intentionally uses a small hand-made theme instead of a CSS framework. */
   color-scheme: dark;
   --bg: #0d1524;
   --panel: rgba(23, 36, 56, 0.82);
@@ -30,6 +31,7 @@ input {
   font: inherit;
 }
 
+/* Top search area: practical QA controls first, decoration second. */
 .page-shell {
   width: min(1180px, calc(100% - 28px));
   margin: 0 auto;
@@ -84,6 +86,7 @@ h1 {
   box-shadow: 0 0 0 3px rgba(143, 183, 255, 0.18);
 }
 
+/* Search suggestions and examples are button chips, not links, because they run local lookups. */
 .search-row button,
 .suggestions button,
 .examples button {
@@ -155,6 +158,7 @@ h1 {
   place-items: start center;
 }
 
+/* Card visual style follows the reference: dark panel, soft blue center glow, large watch image. */
 .watch-card {
   position: relative;
   width: min(460px, 100%);
@@ -216,6 +220,7 @@ h1 {
   filter: drop-shadow(0 24px 28px rgba(0, 0, 0, 0.42));
 }
 
+/* The placeholder is round so missing images still look intentional during data QA. */
 .image-placeholder {
   display: grid;
   place-items: center;
@@ -250,6 +255,7 @@ h1 {
   padding: 0 22px 24px;
 }
 
+/* Spec rows use fixed columns to avoid layout jumps between short and long values. */
 .spec-row {
   display: grid;
   grid-template-columns: 34px minmax(150px, auto) minmax(0, 1fr);
@@ -278,6 +284,7 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+/* Debug is deliberately plain and dense; it is for checking API data, not for end users. */
 .debug-panel {
   margin: 0 22px 24px;
   padding: 14px;
@@ -312,6 +319,7 @@ h1 {
   white-space: pre-wrap;
 }
 
+/* Desktop can show future side-by-side cards, while the current demo still renders one clean card. */
 @media (min-width: 920px) {
   .card-mount.has-card {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -319,6 +327,7 @@ h1 {
   }
 }
 
+/* Mobile keeps the same information order but tightens spacing and type sizes. */
 @media (max-width: 720px) {
   .page-shell {
     width: min(100% - 18px, 520px);

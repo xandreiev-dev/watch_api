@@ -12,6 +12,7 @@ const supportedBrands = [
   "Motorola",
 ];
 
+// Common misspellings and shorthand names that users type during quick checks.
 const brandAliases = {
   apple: "Apple",
   applt: "Apple",
@@ -33,6 +34,7 @@ const brandAliases = {
   moto: "Motorola",
 };
 
+// Example chips double as a small manual test set for the demo UI.
 const examples = [
   "Apple Watch Series 9",
   "apple watch ultra 2",
@@ -59,6 +61,7 @@ const examplesBox = document.querySelector("#examples");
 let currentCard = null;
 let activeRequestId = 0;
 
+// Make free-form input stable enough for matching: casing, punctuation, and extra spaces are ignored.
 function normalizeQuery(value) {
   return String(value || "")
     .toLowerCase()
@@ -72,6 +75,7 @@ function compact(value) {
   return normalizeQuery(value).replace(/\s+/g, "");
 }
 
+// Tiny edit-distance helper. It is enough for typos like "Applt" without adding a dependency.
 function levenshtein(a, b) {
   const left = compact(a);
   const right = compact(b);
@@ -88,6 +92,7 @@ function levenshtein(a, b) {
 }
 
 function detectBrand(query) {
+  // Prefer explicit aliases, then fall back to a one-character typo check on the first word.
   const normalized = normalizeQuery(query);
   const words = normalized.split(" ").filter(Boolean);
   const firstTwo = words.slice(0, 2).join(" ");
@@ -106,6 +111,7 @@ function detectBrand(query) {
 }
 
 function removeBrandWords(query, brand) {
+  // Model lookup expects "watch ultra 2", not "apple watch ultra 2".
   let value = normalizeQuery(query);
   if (!brand) return value;
   const aliases = Object.entries(brandAliases)
@@ -126,6 +132,7 @@ function escapeRegExp(value) {
 function extractModelName(query, brand) {
   let model = removeBrandWords(query, brand);
 
+  // Brand-specific fixes cover common user wording that differs from normalized DB names.
   if (brand === "Samsung" && /^watch\s*\d/.test(model)) {
     model = model.replace(/^watch\s*(\d)/, "galaxy watch$1");
   }
@@ -152,6 +159,7 @@ function normalizeModelName(value) {
 }
 
 function buildEndpointParams(query) {
+  // If brand detection fails, use model-family hints before giving up.
   const normalized = normalizeQuery(query);
   let brand = detectBrand(normalized);
 
@@ -186,6 +194,7 @@ async function fetchJson(url) {
 }
 
 async function getSuggestions(query, brand) {
+  // Suggestions come from the backend search endpoint, then get a small client-side fuzzy sort.
   const normalized = normalizeQuery(query);
   const withoutBrand = removeBrandWords(normalized, brand);
   const q = withoutBrand || normalized;
@@ -212,6 +221,7 @@ function fuzzyScore(candidate, query) {
 }
 
 async function runSearch(query) {
+  // requestId prevents an older slow response from replacing a newer search result.
   const requestId = activeRequestId + 1;
   activeRequestId = requestId;
   const rawQuery = query || searchInput.value;
@@ -256,6 +266,7 @@ function setStatus(message, isError = false) {
 }
 
 function renderSuggestions(items) {
+  // Suggestion clicks rerun the normal search path, keeping behavior identical to typed input.
   suggestionsBox.hidden = !items.length;
   suggestionsBox.innerHTML = "";
   for (const item of items) {
@@ -271,6 +282,7 @@ function renderSuggestions(items) {
 }
 
 function renderCard(card) {
+  // The renderer accepts incomplete cards; missing rows are simply not printed.
   cardMount.classList.toggle("has-card", Boolean(card));
   if (!card) {
     cardMount.innerHTML = "";
@@ -317,6 +329,7 @@ function renderCard(card) {
 }
 
 function buildSpecRows(card) {
+  // Keep row order close to the desired product-card reading flow.
   const rows = [];
   addRow(rows, "📐", "Размер", sizeValue(card));
   addRow(rows, "🖥️", "Дисплей", displayValue(card));
@@ -333,6 +346,7 @@ function buildSpecRows(card) {
 }
 
 function addRow(rows, icon, label, value) {
+  // Empty values are skipped so the card never shows "null" or blank technical rows.
   const cleanValue = Array.isArray(value) ? value.filter(Boolean).join(", ") : value;
   if (cleanValue === null || cleanValue === undefined || cleanValue === "") return;
   rows.push({ icon, label, value: String(cleanValue) });
@@ -412,6 +426,7 @@ function variantsValue(card) {
 }
 
 function renderDebug(card) {
+  // Debug exposes the raw response for QA without changing the normal card layout.
   return `
     <section class="debug-panel">
       <h2>Debug</h2>
@@ -428,6 +443,7 @@ function renderDebug(card) {
 }
 
 function formatToken(value) {
+  // Database keys are stable; display labels can stay friendly and localized here.
   if (!value) return null;
   const dictionary = {
     oled_amoled: "OLED / AMOLED",
@@ -453,6 +469,7 @@ function formatConnectivity(value) {
 }
 
 function formatBatteryLife(value) {
+  // Convert backend "days" values into compact Russian card copy.
   if (!value) return null;
   const match = String(value).match(/([\d.]+)\s*days?/i);
   if (!match) return value;
@@ -479,6 +496,7 @@ function unique(values) {
 }
 
 function escapeHtml(value) {
+  // The card is rendered with template strings, so every API value must be escaped.
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -492,6 +510,7 @@ function escapeAttribute(value) {
 }
 
 function renderExamples() {
+  // Show only a few chips so the search panel stays compact.
   for (const example of examples.slice(0, 6)) {
     const button = document.createElement("button");
     button.type = "button";

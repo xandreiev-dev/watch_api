@@ -8,6 +8,7 @@
   </head>
   <body>
     <main class="page-shell">
+      <!-- Search stays on the page even after a card is rendered, so QA can jump between models quickly. -->
       <section class="search-panel" aria-label="Поиск карточки часов">
         <div>
           <p class="eyebrow">Watch Card API</p>
@@ -36,6 +37,7 @@
         <div id="suggestions" class="suggestions" hidden></div>
       </section>
 
+      <!-- The card is rendered here from API JSON; there is no frontend build step in this demo. -->
       <section id="cardMount" class="card-mount" aria-live="polite"></section>
     </main>
 

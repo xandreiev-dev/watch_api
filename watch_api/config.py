@@ -4,11 +4,13 @@ import os
 from dotenv import load_dotenv
 
 
+# Load local settings once at import time. Missing values stay empty and are validated by the DB layer.
 load_dotenv()
 
 
 @dataclass(frozen=True)
 class Settings:
+    # A frozen settings object keeps runtime code from accidentally mutating connection details.
     sql_hostname: str
     sql_port: int
     sql_username: str
@@ -21,6 +23,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        # Environment names match .env.example so deployment and local setup use the same shape.
         return cls(
             sql_hostname=_env("SQL_HOSTNAME", "localhost"),
             sql_port=int(_env("SQL_PORT", "3306")),
@@ -35,6 +38,7 @@ class Settings:
 
 
 def _env(name: str, default: str = "") -> str:
+    # Trim whitespace because copied credentials often pick up invisible spaces.
     return (os.getenv(name, default) or "").strip()
 
 
