@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Watch Card Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="search-panel" aria-label="Поиск карточки часов">
+        <div>
+          <p class="eyebrow">Watch Card API</p>
+          <h1>Демо карточки часов</h1>
+        </div>
+
+        <div class="search-row">
+          <input
+            id="watchSearch"
+            type="search"
+            autocomplete="off"
+            placeholder="Введите модель часов, например Apple Watch Ultra 2"
+          />
+          <button id="searchButton" type="button">Показать карточку</button>
+        </div>
+
+        <div class="toolbar">
+          <label class="debug-toggle">
+            <input id="debugToggle" type="checkbox" />
+            <span>Debug</span>
+          </label>
+          <div class="examples" id="examples"></div>
+        </div>
+
+        <p id="statusText" class="status-text" role="status"></p>
+        <div id="suggestions" class="suggestions" hidden></div>
+      </section>
+
+      <section id="cardMount" class="card-mount" aria-live="polite"></section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
