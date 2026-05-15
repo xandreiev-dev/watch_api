@@ -1,91 +1,188 @@
 # Watch Card API
 
-Mini backend service for smartwatch cards. The service reads existing MySQL tables
-`g_watch_model` and `g_watch_variant` and returns frontend-ready JSON.
+A small read-only API service for smartwatch product cards.
 
-This service does not parse pages, does not write to the database, and does not
-return `image_data`.
+The project turns smartwatch data from MySQL into clean, frontend-ready JSON. It
+is designed for product pages, comparison pages, autocomplete, and internal data
+quality checks.
 
-## Setup
+The service does not parse external websites, does not write to the database, and
+does not expose binary image data in API responses.
 
-Use Python 3.10 or newer.
+## What It Does
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-```
+- Reads smartwatch models from `g_watch_model`
+- Reads concrete watch variants from `g_watch_variant`
+- Builds one normalized card response per watch model
+- Selects the best `main_variant` from available variants
+- Deduplicates old or technical duplicate variants
+- Normalizes common fields such as connectivity, water resistance, booleans, and display names
+- Marks incomplete cards with `incomplete=true` and readable warnings
+- Serves a simple demo UI for checking cards by free-form search
 
-Fill `.env`:
+## Data Model
 
-```env
-SQL_HOSTNAME=localhost
-SQL_PORT=3306
-SQL_USERNAME=
-SQL_PASSWORD=
-SQL_DATABASE=
-```
+The API expects an existing MySQL database with two main tables:
 
-If MySQL is available only through SSH, add:
+- `g_watch_model` contains the base watch model, for example `Apple Watch Series 9`
+- `g_watch_variant` contains concrete card data and variant-specific specs, for example `41mm GPS`
 
-```env
-SSH_HOST=
-SSH_PORT=22
-SSH_USER=
-SSH_PASSWORD=
-```
-
-## Run
-
-From this project directory:
-
-```bash
-python -m uvicorn watch_api.app:app --reload --host 127.0.0.1 --port 8000
-```
-
-Swagger UI:
+Every model should have at least one usable variant. If a model has no explicit
+variant, the expected canonical variant is:
 
 ```text
-http://127.0.0.1:8000/docs
+variant_name = NULL
+is_canonical = 1
 ```
 
-Demo frontend:
+The API treats the model as the product family and the variant as the concrete
+configuration used to build the card.
 
-```text
-http://127.0.0.1:8000/
-```
+## API Behavior
 
-Health check:
+The service prepares card data for direct frontend usage:
 
-```text
-http://127.0.0.1:8000/health
-```
+- `title` is built from brand and model name without duplicate brand text
+- `display_name` removes duplicated model text from variant names
+- only one variant is returned as canonical in the API response
+- weak variants, parser stubs, and lower-quality technical duplicates are hidden
+- `image_data` is never returned, only `has_image_data`
+- `raw_payload_json` is not exposed as-is
+- selected useful raw fields are exposed through `raw_extra`
+- `Y` / `N` database values are converted to booleans in card blocks
+- incomplete cards are still returned when useful data exists
+
+Useful extra fields may include:
+
+- `battery_life_gps`
+- `battery_life_training`
+- `launch_price`
+- `sleep_tracking`
+- `sport_modes`
+- `vo2_max`
+- `glonass`
+- `galileo`
+- `beidou`
+- `solar_charging`
+- `ant_plus`
+- `android_compatible`
+- `ios_compatible`
+
+## Main Variant Selection
+
+The main variant is selected by practical card quality, not only by the raw
+database flag.
+
+The service prefers variants with:
+
+- source URL
+- image URL
+- display data
+- battery data
+- water resistance
+- case size
+- normal connectivity
+- higher completeness
+- higher quality score
+- fresher update time
+
+If several variants are marked canonical in the database, the API still exposes
+only one canonical variant in the response.
+
+## Variant Cleanup
+
+The response hides variants that are not useful for the website, including:
+
+- `quality_score = 0`
+- parser stubs such as `gsmarena_stub`
+- variants without useful differences from the main variant
+- variants with no case size when better sized variants exist
+- old duplicates with the same business key
+- variant names that repeat the model name, for example `Active 2 Active 2`
+
+Duplicate variants are compared by fields such as:
+
+- case size
+- case material
+- glass type
+- connectivity type
+- LTE / eSIM flags
+- completeness
+- quality score
+
+## Connectivity Normalization
+
+Connectivity values are normalized into a small set of frontend-friendly values:
+
+- `gps`
+- `gps+lte`
+- `gps+bluetooth`
+- `bluetooth`
+- `lte`
+
+The original boolean capabilities are still available in the `connectivity`
+block.
+
+## Water Resistance Normalization
+
+The API normalizes common water resistance formats where possible:
+
+- `50m` becomes `5 ATM`
+- `100m` becomes `10 ATM`
+- `Да (5 ATM)` becomes `5 ATM`
+- `10 ATM / NULL` becomes `10 ATM`
+
+If a reliable value is missing, the card may be returned with an incomplete
+warning instead of showing a fake value.
 
 ## Endpoints
 
-### Get card by model id
+### Health Check
+
+```http
+GET /health
+```
+
+### Get Card by Model ID
+
+```http
+GET /api/watch-card/{model_id}
+```
+
+Example:
 
 ```bash
 curl "http://127.0.0.1:8000/api/watch-card/123"
 ```
 
-### Get card by brand and normalized name
+### Get Card by Brand and Normalized Name
+
+```http
+GET /api/watch-card/by-name?brand=Garmin&normalized_name=fenix%207
+```
+
+Example:
 
 ```bash
 curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Garmin&normalized_name=fenix%207"
 ```
 
-### Search cards
+### Search Cards
+
+```http
+GET /api/watch-card/search?q=fenix&brand=Garmin&limit=20
+```
+
+Example:
 
 ```bash
 curl "http://127.0.0.1:8000/api/watch-card/search?q=fenix&limit=5"
-curl "http://127.0.0.1:8000/api/watch-card/search?q=watch&brand=Samsung&limit=20"
 ```
 
-## Response Shape
+Search is useful for autocomplete, manual checks, and suggestions when an exact
+card lookup fails.
 
-Card endpoints return:
+## Response Example
 
 ```json
 {
@@ -95,7 +192,7 @@ Card endpoints return:
     "model_name": "Fenix 7",
     "normalized_name": "fenix 7",
     "announce_date": "2022-01-18",
-    "os": null,
+    "os": "Garmin OS",
     "cpu": null,
     "gpu": null,
     "ram": null,
@@ -103,17 +200,17 @@ Card endpoints return:
   },
   "title": "Garmin Fenix 7",
   "image": {
-    "url": "https://nanoreview.pro/example.png",
+    "url": "https://example.com/watch.jpg",
     "has_image_data": true
   },
   "display": {
-    "type": "lcd",
+    "type": "AMOLED",
     "size_inch": 1.3,
-    "size_raw": "1.3\" (33mm)",
+    "size_raw": "1.3\"",
     "resolution": "260x260"
   },
   "materials": {
-    "case_material": null,
+    "case_material": "stainless_steel",
     "glass_type": "Sapphire"
   },
   "battery": {
@@ -121,7 +218,7 @@ Card endpoints return:
     "life": "22 days"
   },
   "protection": {
-    "water_resistance": "100m, 10ATM"
+    "water_resistance": "10 ATM"
   },
   "navigation": {
     "gps": true,
@@ -151,8 +248,8 @@ Card endpoints return:
     "case_size_mm": 47,
     "quality_score": 100,
     "is_canonical": true,
-    "source_url": "https://nanoreview.pro/example",
-    "source_host": "nanoreview.pro"
+    "source_url": "https://example.com/source",
+    "source_host": "example.com"
   },
   "variants": [
     {
@@ -160,7 +257,7 @@ Card endpoints return:
       "variant_name": null,
       "display_name": "Garmin Fenix 7",
       "case_size_mm": 47,
-      "case_material": null,
+      "case_material": "stainless_steel",
       "glass_type": "Sapphire",
       "connectivity_type": "gps+bluetooth",
       "battery_life": "22 days",
@@ -169,53 +266,133 @@ Card endpoints return:
     }
   ],
   "source": {
-    "host": "nanoreview.pro",
-    "url": "https://nanoreview.pro/example"
+    "host": "example.com",
+    "url": "https://example.com/source"
   },
   "raw_extra": {
     "battery_life_gps": "289 h",
     "solar_charging": "Y"
-  }
+  },
+  "incomplete": false,
+  "warnings": []
 }
 ```
 
-Search returns a short list:
+## Demo UI
 
-```json
-[
-  {
-    "id": 123,
-    "brand": "Garmin",
-    "model_name": "Fenix 7",
-    "normalized_name": "fenix 7",
-    "image_url": "https://nanoreview.pro/example.png",
-    "battery_life": "22 days",
-    "display_resolution": "260x260",
-    "water_resistance": "100m, 10ATM"
-  }
-]
+The project includes a lightweight static frontend served by FastAPI:
+
+```text
+http://127.0.0.1:8000/
 ```
 
-## Main Variant Rule
+The demo UI allows free-form search, for example:
 
-The main variant is selected in this order:
+- `Apple Watch Series 9`
+- `apple watch ultra 2`
+- `Applt watch ultra`
+- `Samsung Galaxy Watch7`
+- `Garmin Fenix 7 Pro`
+- `Garmin Forerunner 165`
+- `Huawei Watch GT 4`
+- `Amazfit GTR 4`
+- `Xiaomi Watch 2 Pro`
+- `Google Pixel Watch 2`
+- `OnePlus Watch 2`
+- `Motorola Moto 360`
 
-1. `is_canonical = 1`
-2. highest `quality_score`
-3. freshest `updated_at`
+The frontend normalizes user input, detects known brands, tries tolerant model
+matching, and shows suggestions when an exact card is not found.
 
-If there is no canonical variant, the service uses the same quality and freshness
-rules across all variants.
+Enable `Debug` in the UI to view:
 
-Variants in the response are sorted by:
+- source host
+- source URL
+- quality score
+- incomplete status
+- warnings
+- raw response JSON
 
-1. `is_canonical DESC`
-2. `quality_score DESC`
-3. `case_size_mm ASC`
-4. `variant_name ASC`
-5. `id ASC`
+## Requirements
 
-## Local Checks
+- Python 3.10 or newer
+- MySQL with populated watch tables
+- Direct MySQL access or optional SSH tunnel access
+
+Python dependencies are listed in `requirements.txt`.
+
+## Configuration
+
+Create a local environment file:
+
+```bash
+copy .env.example .env
+```
+
+On macOS or Linux:
+
+```bash
+cp .env.example .env
+```
+
+Fill in the MySQL connection:
+
+```env
+SQL_HOSTNAME=localhost
+SQL_PORT=3306
+SQL_USERNAME=
+SQL_PASSWORD=
+SQL_DATABASE=
+```
+
+Optional SSH tunnel settings:
+
+```env
+SSH_HOST=
+SSH_PORT=22
+SSH_USER=
+SSH_PASSWORD=
+```
+
+Leave SSH fields empty when MySQL is available directly.
+
+## Installation
+
+Windows:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+macOS / Linux:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+python -m uvicorn watch_api.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000/
+```
+
+Swagger documentation:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## Checks
 
 Run unit tests:
 
@@ -223,42 +400,52 @@ Run unit tests:
 python -m pytest
 ```
 
-Run HTTP smoke checks after starting the server:
+Run smoke checks after starting the server:
 
 ```bash
 python scripts/smoke_check_api.py
 ```
 
-Manual API checks after starting the server:
+Manual API checks:
 
 ```bash
-curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Garmin&normalized_name=fenix%207"
-curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Samsung&normalized_name=galaxy%20watch6"
+curl "http://127.0.0.1:8000/health"
+curl "http://127.0.0.1:8000/api/watch-card/search?q=fenix&limit=5"
+curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Garmin&normalized_name=forerunner%20165"
+curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Samsung&normalized_name=galaxy%20watch7"
 curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Apple&normalized_name=watch%20series%209"
 ```
 
-Demo UI checks:
+## Project Structure
 
 ```text
-Apple Watch Series 9
-Applt watch ultra
-samsung watch 7
-Garmin Forerunner 165
-Amazfit GTR 4
-Xiaomi Watch 2 Pro
+watch_api/
+  app.py
+  config.py
+  db.py
+  routes/
+    watch_card_routes.py
+  schemas/
+    watch_card_schema.py
+  services/
+    watch_card_service.py
+  static/
+    index.html
+    styles.css
+    app.js
+scripts/
+  smoke_check_api.py
+tests/
+  test_watch_card_service.py
 ```
 
-Enable `Debug` in the demo UI to show source, quality score, incomplete warnings,
-and raw JSON.
+## Repository Notes
 
-Recommended models for smoke checks:
+Local secrets and generated files should not be committed.
 
-- Garmin Fenix 7
-- Garmin Venu 2
-- Samsung Galaxy Watch6
-- Samsung Galaxy Watch7
-- Apple Watch Series 9
-- Huawei Watch GT 4
-- Google Pixel Watch 3
-- OnePlus Watch 3
-- Motorola Moto Watch 120
+The repository includes `.env.example` for configuration shape, while `.env` is
+ignored by Git.
+
+The API is intentionally small and read-only. Parser logic, database imports,
+and frontend production application code should stay outside this service unless
+the project is intentionally expanded later.
