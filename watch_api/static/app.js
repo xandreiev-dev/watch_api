@@ -6,10 +6,13 @@ const supportedBrands = [
   "Amazfit",
   "Xiaomi",
   "Redmi",
+  "Honor",
   "Google",
   "OnePlus",
   "Oppo",
+  "Realme",
   "Motorola",
+  "Vivo",
 ];
 
 // Common misspellings and shorthand names that users type during quick checks.
@@ -22,6 +25,7 @@ const brandAliases = {
   samsng: "Samsung",
   garmin: "Garmin",
   huawei: "Huawei",
+  honor: "Honor",
   amazfit: "Amazfit",
   xiaomi: "Xiaomi",
   redmi: "Redmi",
@@ -30,8 +34,11 @@ const brandAliases = {
   oneplus: "OnePlus",
   "one plus": "OnePlus",
   oppo: "Oppo",
+  realme: "Realme",
+  "real me": "Realme",
   motorola: "Motorola",
   moto: "Motorola",
+  vivo: "Vivo",
 };
 
 // Example chips double as a small manual test set for the demo UI.
@@ -40,6 +47,8 @@ const examples = [
   "apple watch ultra 2",
   "Applt watch ultra",
   "Samsung Galaxy Watch7",
+  "Realme Watch 2 Pro",
+  "Vivo iQOO Watch",
   "Garmin Fenix 7 Pro",
   "Garmin Forerunner 165",
   "Huawei Watch GT 4",
@@ -169,6 +178,8 @@ function buildEndpointParams(query) {
   if (!brand && normalized.includes("fenix")) brand = "Garmin";
   if (!brand && normalized.includes("forerunner")) brand = "Garmin";
   if (!brand && normalized.includes("gtr")) brand = "Amazfit";
+  if (!brand && normalized.includes("iqoo")) brand = "Vivo";
+  if (!brand && normalized.includes("realme")) brand = "Realme";
 
   const normalizedName = extractModelName(normalized, brand);
   return { brand, normalized_name: normalizedName };
@@ -186,7 +197,7 @@ async function fetchJson(url) {
   const response = await fetch(url);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(body.detail || "Не удалось получить карточку");
+    const error = new Error(body.detail || "Карточка недоступна");
     error.status = response.status;
     throw error;
   }
@@ -230,28 +241,43 @@ async function runSearch(query) {
   renderCard(null);
   renderSuggestions([]);
 
-  if (!params.brand || !params.normalized_name) {
-    setStatus("Не понял бренд или модель. Попробуйте ввести название полностью.", true);
+  if (!params.normalized_name) {
+    setStatus("Введите бренд и модель часов.", true);
     return;
   }
 
-  setStatus("Загружаю карточку...");
+  if (!params.brand) {
+    setStatus("Поиск похожих моделей...");
+    searchButton.disabled = true;
+    const suggestions = await getSuggestions(rawQuery, null);
+    if (requestId !== activeRequestId) return;
+    if (suggestions.length) {
+      setStatus("Бренд не определён. Выберите подходящую модель из списка:", true);
+      renderSuggestions(suggestions);
+    } else {
+      setStatus("Не удалось определить бренд. Уточните запрос или укажите бренд полностью.", true);
+    }
+    searchButton.disabled = false;
+    return;
+  }
+
+  setStatus("Загрузка карточки...");
   searchButton.disabled = true;
 
   try {
     const card = await fetchJson(endpointUrl(params));
     if (requestId !== activeRequestId) return;
     currentCard = card;
-    setStatus(`Найдено: ${card.title}`);
+    setStatus(`Карточка загружена: ${card.title}`);
     renderCard(card);
   } catch (error) {
     const suggestions = await getSuggestions(rawQuery, params.brand);
     if (requestId !== activeRequestId) return;
     if (suggestions.length) {
-      setStatus("Точного совпадения нет. Возможно, подойдёт один из вариантов:", true);
+      setStatus("Точное совпадение не найдено. Выберите ближайший вариант:", true);
       renderSuggestions(suggestions);
     } else {
-      setStatus("Карточка не найдена. Проверьте название или попробуйте другое написание.", true);
+      setStatus("Карточка не найдена. Проверьте бренд и название модели.", true);
     }
   } finally {
     if (requestId === activeRequestId) {
@@ -511,7 +537,7 @@ function escapeAttribute(value) {
 
 function renderExamples() {
   // Show only a few chips so the search panel stays compact.
-  for (const example of examples.slice(0, 6)) {
+  for (const example of examples.slice(0, 8)) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = example;
