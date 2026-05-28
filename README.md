@@ -1,6 +1,6 @@
 # Watch Card API
 
-A small read-only API service for smartwatch product cards.
+A small API service for smartwatch product cards with read-only database access.
 
 The project turns smartwatch data from MySQL into clean, frontend-ready JSON. It
 is designed for product pages, comparison pages, autocomplete, and internal data
@@ -46,7 +46,9 @@ The service prepares card data for direct frontend usage:
 - `display_name` removes duplicated model text from variant names
 - only one variant is returned as canonical in the API response
 - weak variants, parser stubs, and lower-quality technical duplicates are hidden
-- `image_data` is never returned, only `has_image_data`
+- `image_data` is never returned in JSON, only `has_image_data`
+- cards prefer local static image files generated from `image_data`
+- GSMArena images may stay as external `image_url` links
 - `raw_payload_json` is not exposed as-is
 - selected useful raw fields are exposed through `raw_extra`
 - `Y` / `N` database values are converted to booleans in card blocks
@@ -200,7 +202,7 @@ card lookup fails.
   },
   "title": "Garmin Fenix 7",
   "image": {
-    "url": "https://example.com/watch.jpg",
+    "url": "/watch-images/variant-456.jpg",
     "has_image_data": true
   },
   "display": {
@@ -416,6 +418,26 @@ curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Samsung&normalized_name
 curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Apple&normalized_name=watch%20series%209"
 ```
 
+## Local Images
+
+External watch image URLs can be unstable, so non-GSMArena images are stored as
+local static files when `image_data` is available.
+
+Export existing database images:
+
+```bash
+python scripts/export_watch_images.py
+```
+
+By default, GSMArena rows are skipped and may keep their external `image_url`.
+Generated files are written to:
+
+```text
+watch_api/static/watch-images/
+```
+
+The generated image files are runtime data and are ignored by Git.
+
 ## Project Structure
 
 ```text
@@ -430,10 +452,12 @@ watch_api/
   services/
     watch_card_service.py
   static/
+    watch-images/
     index.html
     styles.css
     app.js
 scripts/
+  export_watch_images.py
   smoke_check_api.py
 tests/
   test_watch_card_service.py
@@ -446,6 +470,6 @@ Local secrets and generated files should not be committed.
 The repository includes `.env.example` for configuration shape, while `.env` is
 ignored by Git.
 
-The API is intentionally small and read-only. Parser logic, database imports,
-and frontend production application code should stay outside this service unless
-the project is intentionally expanded later.
+The API is intentionally small and keeps database access read-only. Parser logic,
+database imports, and frontend production application code should stay outside
+this service unless the project is intentionally expanded later.

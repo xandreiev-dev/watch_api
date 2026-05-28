@@ -35,3 +35,6 @@ dist/
 build/
 .parcel-cache/
 
+# Runtime image cache exported from DB image_data
+watch_api/static/watch-images/*
+!watch_api/static/watch-images/.gitkeep

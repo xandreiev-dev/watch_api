@@ -1,6 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
 
+import pytest
+import watch_api.services.watch_card_service as watch_card_service
 from watch_api.services.watch_card_service import (
     build_model_title,
     build_variant_display_name,
@@ -12,6 +14,11 @@ from watch_api.services.watch_card_service import (
 
 
 # The tests use plain dictionaries that look like DB rows, so service logic can be checked without MySQL.
+@pytest.fixture(autouse=True)
+def isolated_image_storage(tmp_path, monkeypatch):
+    monkeypatch.setattr(watch_card_service, "IMAGE_STORAGE_DIR", tmp_path / "watch-images")
+
+
 def test_choose_main_variant_prefers_complete_lte_variant_over_db_canonical_flag():
     variants = [
         {
@@ -146,7 +153,9 @@ def test_build_watch_card_shape_and_variant_sorting():
     card = build_watch_card(model, variants)
 
     assert card["title"] == "Garmin Fenix 7"
+    assert card["image"]["url"] == "/watch-images/variant-457.jpg"
     assert card["image"]["has_image_data"] is True
+    assert (watch_card_service.IMAGE_STORAGE_DIR / "variant-457.jpg").read_bytes() == b"image"
     assert card["navigation"]["gps"] is True
     assert card["connectivity"]["wifi"] is True
     assert card["connectivity"]["lte"] is False
@@ -157,6 +166,74 @@ def test_build_watch_card_shape_and_variant_sorting():
     assert card["variants"][1]["id"] == 456
     assert card["variants"][1]["is_canonical"] is False
     assert card["raw_extra"] == {"solar_charging": "Y"}
+
+
+def test_gsmarena_image_url_stays_external():
+    model = {
+        "id": 125,
+        "brand": "Test",
+        "model_name": "Watch",
+        "normalized_name": "watch",
+        "announce_date": None,
+        "os": None,
+        "cpu": None,
+        "gpu": None,
+        "ram": None,
+        "storage": None,
+        "display_type": None,
+        "water_resistance": None,
+    }
+    variants = [
+        {
+            "id": 2,
+            "variant_name": None,
+            "quality_score": 80,
+            "is_canonical": 1,
+            "updated_at": datetime(2024, 1, 1),
+            "source_host": "gsmarena.com",
+            "image_url": "https://fdn.gsmarena.com/imgroot/watch.jpg",
+            "image_data": b"image",
+        }
+    ]
+
+    card = build_watch_card(model, variants)
+
+    assert card["image"]["url"] == "https://fdn.gsmarena.com/imgroot/watch.jpg"
+    assert card["image"]["has_image_data"] is True
+
+
+def test_external_non_gsmarena_image_without_image_data_gets_warning():
+    model = {
+        "id": 126,
+        "brand": "Test",
+        "model_name": "Watch",
+        "normalized_name": "watch",
+        "announce_date": None,
+        "os": None,
+        "cpu": None,
+        "gpu": None,
+        "ram": None,
+        "storage": None,
+        "display_type": None,
+        "water_resistance": None,
+    }
+    variants = [
+        {
+            "id": 3,
+            "variant_name": None,
+            "quality_score": 80,
+            "is_canonical": 1,
+            "updated_at": datetime(2024, 1, 1),
+            "source_host": "example.com",
+            "image_url": "https://example.com/watch.jpg",
+        }
+    ]
+
+    card = build_watch_card(model, variants)
+
+    assert card["image"]["url"] == "https://example.com/watch.jpg"
+    assert card["image"]["has_image_data"] is False
+    assert "missing_image_data" in card["warnings"]
 
 
 def test_build_watch_card_serializes_numeric_model_memory_fields_as_text():

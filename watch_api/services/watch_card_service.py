@@ -2,6 +2,7 @@ import json
 import re
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -35,6 +36,29 @@ SAMSUNG_MODEL_SIZE_WHITELIST = {
     "galaxywatch7": {40.0, 44.0},
     "galaxywatchultra": {47.0},
 }
+
+IMAGE_URL_PREFIX = "/watch-images"
+IMAGE_STORAGE_DIR = Path(__file__).resolve().parents[1] / "static" / "watch-images"
+
+
+def save_variant_image_file(variant: dict[str, Any]) -> str | None:
+    # Store DB image_data as a local static file and return the URL used by the frontend.
+    image_bytes = _image_bytes(variant.get("image_data"))
+    variant_id = _int_or_zero(variant.get("id"))
+    if not image_bytes or variant_id <= 0:
+        return None
+
+    try:
+        IMAGE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        extension = _guess_image_extension(image_bytes)
+        final_path = IMAGE_STORAGE_DIR / f"variant-{variant_id}.{extension}"
+        if not final_path.exists() or final_path.stat().st_size != len(image_bytes):
+            temp_path = final_path.with_suffix(f".{extension}.tmp")
+            temp_path.write_bytes(image_bytes)
+            temp_path.replace(final_path)
+        return f"{IMAGE_URL_PREFIX}/{final_path.name}"
+    except OSError:
+        return None
 
 
 def get_card_by_model_id(model_id: int) -> dict[str, Any]:
@@ -79,7 +103,7 @@ def search_cards(q: str | None, brand: str | None, limit: int) -> list[dict[str,
                 "brand": _clean_value(model.get("brand")),
                 "model_name": _clean_value(model.get("model_name")),
                 "normalized_name": _clean_value(model.get("normalized_name")),
-                "image_url": _clean_value(main_variant.get("image_url")) if main_variant else None,
+                "image_url": _card_image_url(main_variant) if main_variant else None,
                 "battery_life": _clean_value(main_variant.get("battery_life")) if main_variant else None,
                 "display_resolution": _clean_value(main_variant.get("display_resolution")) if main_variant else None,
                 "water_resistance": _clean_value(model.get("water_resistance")),
@@ -121,6 +145,7 @@ def build_watch_card(model: dict[str, Any], variants: list[dict[str, Any]]) -> d
     )
     battery_life = _battery_life_value(main_variant)
     incomplete_warnings = _card_incomplete_warnings(model, main_variant, water_resistance, battery_life)
+    image_url = _card_image_url(main_variant)
 
     return {
         "model": {
@@ -137,7 +162,7 @@ def build_watch_card(model: dict[str, Any], variants: list[dict[str, Any]]) -> d
         },
         "title": title,
         "image": {
-            "url": _clean_value(main_variant.get("image_url")),
+            "url": image_url,
             "has_image_data": bool(main_variant.get("image_data")),
         },
         "display": {
@@ -641,7 +666,7 @@ def _dedupe_variant_sort_key(variant: dict[str, Any]) -> tuple[int, int, int, in
         _variant_completeness_score(variant),
         _connectivity_rank(variant),
         _has_value(variant.get("source_url")),
-        _has_value(variant.get("image_url")),
+        _image_source_rank(variant),
         _int_or_zero(variant.get("quality_score")),
         _datetime_or_min(variant.get("updated_at")),
         _int_or_zero(variant.get("id")),
@@ -652,7 +677,7 @@ def _main_variant_sort_key(variant: dict[str, Any]) -> tuple[int, int, int, int,
     # This mirrors how a real product card is judged: source, image, specs, then score.
     return (
         _has_value(variant.get("source_url")),
-        _has_value(variant.get("image_url")),
+        _image_source_rank(variant),
         _has_display_data(variant),
         _has_value(_battery_life_value(variant)),
         _variant_completeness_score(variant),
@@ -767,6 +792,8 @@ def _variant_completeness_score(variant: dict[str, Any]) -> int:
         "image_url",
     )
     score = sum(_has_value(variant.get(field)) for field in fields)
+    if _image_bytes(variant.get("image_data")):
+        score += 1
     if _battery_life_value(variant):
         score += 1
     return score
@@ -864,7 +891,7 @@ def _card_incomplete_warnings(
     # Warnings describe data gaps without preventing the card from rendering.
     warnings: list[str] = []
     required_checks = {
-        "image_url": _clean_value(variant.get("image_url")) is not None,
+        "image_url": _card_image_url(variant) is not None,
         "display_size": _display_size_inch(variant) is not None,
         "display_resolution": _clean_value(variant.get("display_resolution")) is not None,
         "battery_life": battery_life is not None,
@@ -878,11 +905,75 @@ def _card_incomplete_warnings(
         if not ok:
             warnings.append(f"missing_{key}")
 
+    if _uses_external_non_gsmarena_image(variant):
+        warnings.append("missing_image_data")
+
     if _identity_text(model.get("brand")) == "amazfit" and _identity_text(model.get("normalized_name")) == "trex3pro":
         # This model was seen with too little data for a production-ready card.
         if warnings:
             warnings.insert(0, "not_production_ready")
     return warnings
+
+
+def _card_image_url(variant: dict[str, Any]) -> str | None:
+    # GSMArena images are allowed to stay external; other sources prefer local static files.
+    external_url = _clean_value(variant.get("image_url"))
+    if _is_gsmarena_image_source(variant):
+        return external_url
+    local_url = save_variant_image_file(variant)
+    if local_url:
+        return local_url
+    return external_url
+
+
+def _image_source_rank(variant: dict[str, Any]) -> int:
+    if _is_gsmarena_image_source(variant) and _clean_value(variant.get("image_url")) is not None:
+        return 2
+    if _image_bytes(variant.get("image_data")):
+        return 2
+    if _clean_value(variant.get("image_url")) is not None:
+        return 1
+    return 0
+
+
+def _uses_external_non_gsmarena_image(variant: dict[str, Any]) -> bool:
+    return (
+        _clean_value(variant.get("image_url")) is not None
+        and not _is_gsmarena_image_source(variant)
+        and not _image_bytes(variant.get("image_data"))
+    )
+
+
+def _is_gsmarena_image_source(variant: dict[str, Any]) -> bool:
+    source_text = " ".join(
+        str(_clean_value(variant.get(field)) or "")
+        for field in ("source_host", "source_url", "image_url")
+    )
+    return "gsmarena" in source_text.casefold()
+
+
+def _image_bytes(value: Any) -> bytes:
+    if value is None:
+        return b""
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    return b""
+
+
+def _guess_image_extension(image_data: bytes) -> str:
+    if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if image_data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if image_data.startswith(b"RIFF") and image_data[8:12] == b"WEBP":
+        return "webp"
+    if image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+        return "gif"
+    return "jpg"
 
 
 def _is_card_incomplete_for_ui(model: dict[str, Any], warnings: list[str]) -> bool:
