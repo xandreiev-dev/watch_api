@@ -202,6 +202,42 @@ def test_gsmarena_image_url_stays_external():
     assert card["image"]["has_image_data"] is True
 
 
+def test_existing_local_image_file_is_used_without_blob():
+    model = {
+        "id": 127,
+        "brand": "Test",
+        "model_name": "Watch",
+        "normalized_name": "watch",
+        "announce_date": None,
+        "os": None,
+        "cpu": None,
+        "gpu": None,
+        "ram": None,
+        "storage": None,
+        "display_type": None,
+        "water_resistance": None,
+    }
+    watch_card_service.IMAGE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    (watch_card_service.IMAGE_STORAGE_DIR / "variant-4.png").write_bytes(b"png")
+    variants = [
+        {
+            "id": 4,
+            "variant_name": None,
+            "quality_score": 80,
+            "is_canonical": 1,
+            "updated_at": datetime(2024, 1, 1),
+            "source_host": "nanoreview.pro",
+            "image_url": "https://nanoreview.pro/watch.jpg",
+            "image_data_present": 1,
+        }
+    ]
+
+    card = build_watch_card(model, variants)
+
+    assert card["image"]["url"] == "/watch-images/variant-4.png"
+    assert card["image"]["has_image_data"] is True
+
+
 def test_external_non_gsmarena_image_without_image_data_gets_warning():
     model = {
         "id": 126,

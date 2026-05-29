@@ -163,7 +163,7 @@ def build_watch_card(model: dict[str, Any], variants: list[dict[str, Any]]) -> d
         "title": title,
         "image": {
             "url": image_url,
-            "has_image_data": bool(main_variant.get("image_data")),
+            "has_image_data": _has_image_data(main_variant),
         },
         "display": {
             "type": _clean_value(model.get("display_type")),
@@ -366,7 +366,9 @@ def _fetch_variants(model_id: int) -> list[dict[str, Any]]:
             gyro, gps, nfc, wifi, bluetooth, quality_score, is_canonical,
             created_at, updated_at, case_size_mm_key, case_material_key,
             connectivity_key, esim_key, lte_key, source_url, source_host,
-            image_url, image_data, raw_payload_json
+            image_url,
+            image_data IS NOT NULL AND LENGTH(image_data) > 0 AS image_data_present,
+            raw_payload_json
         FROM g_watch_variant
         WHERE watch_model_id = %s
         ORDER BY
@@ -792,7 +794,7 @@ def _variant_completeness_score(variant: dict[str, Any]) -> int:
         "image_url",
     )
     score = sum(_has_value(variant.get(field)) for field in fields)
-    if _image_bytes(variant.get("image_data")):
+    if _has_image_data(variant):
         score += 1
     if _battery_life_value(variant):
         score += 1
@@ -920,7 +922,10 @@ def _card_image_url(variant: dict[str, Any]) -> str | None:
     external_url = _clean_value(variant.get("image_url"))
     if _is_gsmarena_image_source(variant):
         return external_url
-    local_url = save_variant_image_file(variant)
+    if _image_bytes(variant.get("image_data")):
+        local_url = save_variant_image_file(variant)
+    else:
+        local_url = _existing_local_image_url(variant)
     if local_url:
         return local_url
     return external_url
@@ -929,7 +934,7 @@ def _card_image_url(variant: dict[str, Any]) -> str | None:
 def _image_source_rank(variant: dict[str, Any]) -> int:
     if _is_gsmarena_image_source(variant) and _clean_value(variant.get("image_url")) is not None:
         return 2
-    if _image_bytes(variant.get("image_data")):
+    if _has_image_data(variant):
         return 2
     if _clean_value(variant.get("image_url")) is not None:
         return 1
@@ -940,7 +945,7 @@ def _uses_external_non_gsmarena_image(variant: dict[str, Any]) -> bool:
     return (
         _clean_value(variant.get("image_url")) is not None
         and not _is_gsmarena_image_source(variant)
-        and not _image_bytes(variant.get("image_data"))
+        and not _has_image_data(variant)
     )
 
 
@@ -962,6 +967,23 @@ def _image_bytes(value: Any) -> bytes:
     if isinstance(value, memoryview):
         return value.tobytes()
     return b""
+
+
+def _has_image_data(variant: dict[str, Any]) -> bool:
+    if _image_bytes(variant.get("image_data")):
+        return True
+    return bool(_int_or_zero(variant.get("image_data_present")))
+
+
+def _existing_local_image_url(variant: dict[str, Any]) -> str | None:
+    variant_id = _int_or_zero(variant.get("id"))
+    if variant_id <= 0:
+        return None
+    for extension in ("jpg", "png", "webp", "gif"):
+        path = IMAGE_STORAGE_DIR / f"variant-{variant_id}.{extension}"
+        if path.exists() and path.is_file():
+            return f"{IMAGE_URL_PREFIX}/{path.name}"
+    return None
 
 
 def _guess_image_extension(image_data: bytes) -> str:
@@ -1092,7 +1114,7 @@ def _effective_quality_score(model: dict[str, Any], variant: dict[str, Any]) -> 
 
     score = 0
     score += 15 if _has_value(variant.get("source_url")) else 0
-    score += 15 if _has_value(variant.get("image_url")) or _has_value(variant.get("image_data")) else 0
+    score += 15 if _has_value(variant.get("image_url")) or _has_image_data(variant) else 0
     score += 15 if _has_display_data(variant) else 0
     score += 10 if _has_value(variant.get("case_size_mm")) else 0
     score += 10 if _normalize_water_resistance(model.get("water_resistance")) else 0
