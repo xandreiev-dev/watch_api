@@ -168,7 +168,7 @@ def test_build_watch_card_shape_and_variant_sorting():
     assert card["raw_extra"] == {"solar_charging": "Y"}
 
 
-def test_gsmarena_image_url_stays_external():
+def test_gsmarena_image_data_is_saved_locally():
     model = {
         "id": 125,
         "brand": "Test",
@@ -198,8 +198,9 @@ def test_gsmarena_image_url_stays_external():
 
     card = build_watch_card(model, variants)
 
-    assert card["image"]["url"] == "https://fdn.gsmarena.com/imgroot/watch.jpg"
+    assert card["image"]["url"] == "/watch-images/variant-2.jpg"
     assert card["image"]["has_image_data"] is True
+    assert (watch_card_service.IMAGE_STORAGE_DIR / "variant-2.jpg").read_bytes() == b"image"
 
 
 def test_existing_local_image_file_is_used_without_blob():
@@ -236,6 +237,42 @@ def test_existing_local_image_file_is_used_without_blob():
 
     assert card["image"]["url"] == "/watch-images/variant-4.png"
     assert card["image"]["has_image_data"] is True
+
+
+def test_image_data_present_can_be_loaded_lazily(monkeypatch):
+    model = {
+        "id": 128,
+        "brand": "Garmin",
+        "model_name": "Venu 3",
+        "normalized_name": "venu 3",
+        "announce_date": None,
+        "os": None,
+        "cpu": None,
+        "gpu": None,
+        "ram": None,
+        "storage": None,
+        "display_type": None,
+        "water_resistance": None,
+    }
+    variants = [
+        {
+            "id": 5,
+            "variant_name": None,
+            "quality_score": 80,
+            "is_canonical": 1,
+            "updated_at": datetime(2024, 1, 1),
+            "source_host": "garmin.ru",
+            "image_url": "https://garmin.ru/watch.jpg",
+            "image_data_present": 1,
+        }
+    ]
+    monkeypatch.setattr(watch_card_service, "_fetch_variant_image_data", lambda variant_id: b"image")
+
+    card = build_watch_card(model, variants)
+
+    assert card["image"]["url"] == "/watch-images/variant-5.jpg"
+    assert card["image"]["has_image_data"] is True
+    assert (watch_card_service.IMAGE_STORAGE_DIR / "variant-5.jpg").read_bytes() == b"image"
 
 
 def test_external_non_gsmarena_image_without_image_data_gets_warning():

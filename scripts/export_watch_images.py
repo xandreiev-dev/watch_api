@@ -41,9 +41,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Export watch image_data blobs to local static files.")
     parser.add_argument("--limit", type=int, default=None, help="Optional max number of DB rows to scan.")
     parser.add_argument(
-        "--include-gsmarena",
+        "--skip-gsmarena",
         action="store_true",
-        help="Also export GSMArena images. By default they stay external.",
+        help="Leave GSMArena rows external. By default every available image_data row is exported.",
     )
     parser.add_argument("--quiet", action="store_true", help="Print only the final summary.")
     args = parser.parse_args()
@@ -54,7 +54,7 @@ def main() -> int:
     failed = 0
 
     for row in fetch_rows(args.limit):
-        if is_gsmarena_row(row) and not args.include_gsmarena:
+        if is_gsmarena_row(row) and args.skip_gsmarena:
             skipped_gsmarena += 1
             continue
 

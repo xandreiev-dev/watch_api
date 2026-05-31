@@ -47,8 +47,8 @@ The service prepares card data for direct frontend usage:
 - only one variant is returned as canonical in the API response
 - weak variants, parser stubs, and lower-quality technical duplicates are hidden
 - `image_data` is never returned in JSON, only `has_image_data`
-- cards prefer local static image files generated from `image_data`
-- GSMArena images may stay as external `image_url` links
+- cards prefer local static image files generated from `image_data` for every source
+- external `image_url` values are used only when no database image data is available
 - `raw_payload_json` is not exposed as-is
 - selected useful raw fields are exposed through `raw_extra`
 - `Y` / `N` database values are converted to booleans in card blocks
@@ -420,8 +420,8 @@ curl "http://127.0.0.1:8000/api/watch-card/by-name?brand=Apple&normalized_name=w
 
 ## Local Images
 
-External watch image URLs can be unstable, so non-GSMArena images are stored as
-local static files when `image_data` is available.
+External watch image URLs can be unstable, so watch images are stored as local
+static files when `image_data` is available.
 
 Export existing database images:
 
@@ -429,7 +429,6 @@ Export existing database images:
 python scripts/export_watch_images.py
 ```
 
-By default, GSMArena rows are skipped and may keep their external `image_url`.
 Generated files are written to:
 
 ```text

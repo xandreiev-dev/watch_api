@@ -61,6 +61,14 @@ def save_variant_image_file(variant: dict[str, Any]) -> str | None:
         return None
 
 
+def load_and_save_variant_image_file(variant_id: int) -> str | None:
+    # Lazy fallback for deployed servers where image_data exists but static files were not exported yet.
+    image_data = _fetch_variant_image_data(variant_id)
+    if not image_data:
+        return None
+    return save_variant_image_file({"id": variant_id, "image_data": image_data})
+
+
 def get_card_by_model_id(model_id: int) -> dict[str, Any]:
     # Public endpoint path: fetch model, fetch its variants, then build the same card shape.
     model = _fetch_model_by_id(model_id)
@@ -907,7 +915,7 @@ def _card_incomplete_warnings(
         if not ok:
             warnings.append(f"missing_{key}")
 
-    if _uses_external_non_gsmarena_image(variant):
+    if _uses_external_image_without_data(variant):
         warnings.append("missing_image_data")
 
     if _identity_text(model.get("brand")) == "amazfit" and _identity_text(model.get("normalized_name")) == "trex3pro":
@@ -918,22 +926,20 @@ def _card_incomplete_warnings(
 
 
 def _card_image_url(variant: dict[str, Any]) -> str | None:
-    # GSMArena images are allowed to stay external; other sources prefer local static files.
+    # Prefer a local server file for every source; external URLs are only a last fallback.
     external_url = _clean_value(variant.get("image_url"))
-    if _is_gsmarena_image_source(variant):
-        return external_url
     if _image_bytes(variant.get("image_data")):
         local_url = save_variant_image_file(variant)
     else:
         local_url = _existing_local_image_url(variant)
+        if local_url is None and _has_image_data(variant):
+            local_url = load_and_save_variant_image_file(_int_or_zero(variant.get("id")))
     if local_url:
         return local_url
     return external_url
 
 
 def _image_source_rank(variant: dict[str, Any]) -> int:
-    if _is_gsmarena_image_source(variant) and _clean_value(variant.get("image_url")) is not None:
-        return 2
     if _has_image_data(variant):
         return 2
     if _clean_value(variant.get("image_url")) is not None:
@@ -941,20 +947,31 @@ def _image_source_rank(variant: dict[str, Any]) -> int:
     return 0
 
 
-def _uses_external_non_gsmarena_image(variant: dict[str, Any]) -> bool:
+def _uses_external_image_without_data(variant: dict[str, Any]) -> bool:
     return (
         _clean_value(variant.get("image_url")) is not None
-        and not _is_gsmarena_image_source(variant)
         and not _has_image_data(variant)
     )
 
 
-def _is_gsmarena_image_source(variant: dict[str, Any]) -> bool:
-    source_text = " ".join(
-        str(_clean_value(variant.get(field)) or "")
-        for field in ("source_host", "source_url", "image_url")
-    )
-    return "gsmarena" in source_text.casefold()
+def _fetch_variant_image_data(variant_id: int) -> bytes:
+    if variant_id <= 0:
+        return b""
+    sql = """
+        SELECT image_data
+        FROM g_watch_variant
+        WHERE id = %s
+          AND image_data IS NOT NULL
+          AND LENGTH(image_data) > 0
+        LIMIT 1
+    """
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, (variant_id,))
+            row = cursor.fetchone()
+    if not row:
+        return b""
+    return _image_bytes(row.get("image_data"))
 
 
 def _image_bytes(value: Any) -> bytes:
