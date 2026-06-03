@@ -429,6 +429,18 @@ Export existing database images:
 python scripts/export_watch_images.py
 ```
 
+Export images and point `g_watch_variant.image_url` to the generated local files:
+
+```bash
+python scripts/export_watch_images.py --update-db
+```
+
+Preview database changes first:
+
+```bash
+python scripts/export_watch_images.py --update-db --dry-run --quiet
+```
+
 Generated files are written to:
 
 ```text
