@@ -11,6 +11,9 @@ from watch_api.db import get_connection
 import watch_api.services.watch_card_service as watch_card_service
 
 
+PUBLIC_IMAGE_URL_PREFIX = "https://api.premikum.com/watch-images"
+
+
 def is_gsmarena_row(row: dict[str, Any]) -> bool:
     source_text = " ".join(
         str(row.get(field) or "")
@@ -60,8 +63,8 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="Optional max number of DB rows to scan.")
     parser.add_argument(
         "--url-prefix",
-        default=watch_card_service.IMAGE_URL_PREFIX,
-        help="Public URL prefix for generated files, for example /watch-images.",
+        default=PUBLIC_IMAGE_URL_PREFIX,
+        help="Public URL prefix for generated files.",
     )
     parser.add_argument(
         "--skip-gsmarena",

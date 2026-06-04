@@ -441,10 +441,29 @@ Preview database changes first:
 python scripts/export_watch_images.py --update-db --dry-run --quiet
 ```
 
+Upload database images to the production static directory:
+
+```bash
+python scripts/upload_watch_images_to_server.py --from-db --quiet
+```
+
+Verify that database URLs match files on the server:
+
+```bash
+python scripts/check_watch_image_urls.py
+```
+
 Generated files are written to:
 
 ```text
 watch_api/static/watch-images/
+```
+
+Production files are served from:
+
+```text
+https://api.premikum.com/watch-images/
+/var/www/pub/watch-images/
 ```
 
 The generated image files are runtime data and are ignored by Git.
