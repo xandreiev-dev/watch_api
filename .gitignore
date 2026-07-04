@@ -42,3 +42,6 @@ watch_api/static/watch-images/*
 # Local assistant attachments and temporary image checks
 .codex-remote-attachments/
 tmp_variant_*.jpg
+
+# Local database maintenance backups
+scripts/backups/
