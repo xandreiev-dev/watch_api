@@ -10,6 +10,7 @@ from watch_api.services.watch_card_service import (
     choose_main_variant,
     extract_raw_extra,
     prepare_response_variants,
+    _search_query_aliases,
 )
 
 
@@ -63,6 +64,16 @@ def test_variant_display_name_strips_model_name_prefix():
 
     assert build_variant_display_name(model, "Watch Series 9 41mm") == "Apple Watch Series 9 41mm"
     assert build_variant_display_name(model, "Apple Watch Series 9 Watch Series 9 41mm") == "Apple Watch Series 9 41mm"
+
+
+def test_search_query_aliases_cover_google_watch_short_name():
+    assert _search_query_aliases("google watch 5") == [
+        "google watch 5",
+        "watch 5",
+        "google pixel watch 5",
+        "pixel watch 5",
+    ]
+    assert _search_query_aliases("pixel watch 5") == ["pixel watch 5"]
 
 
 def test_extract_raw_extra_only_allowed_fields():

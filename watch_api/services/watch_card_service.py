@@ -393,16 +393,23 @@ def _fetch_variants(model_id: int) -> list[dict[str, Any]]:
 
 
 def _search_models(q: str | None, brand: str | None, limit: int) -> list[dict[str, Any]]:
-    # Search is intentionally simple SQL LIKE; heavier fuzzy logic belongs in the UI for now.
+    # Search stays SQL-only, with a few product-name aliases for common user wording.
     where_clauses: list[str] = []
     params: list[Any] = []
 
     if q:
-        pattern = f"%{q.casefold()}%"
-        where_clauses.append(
-            "(LOWER(model_name) LIKE %s OR LOWER(normalized_name) LIKE %s OR LOWER(brand) LIKE %s)"
-        )
-        params.extend([pattern, pattern, pattern])
+        aliases = _search_query_aliases(q)
+        if aliases:
+            patterns = [f"%{item}%" for item in aliases]
+            model_checks = " OR ".join(
+                "(LOWER(model_name) LIKE %s OR LOWER(normalized_name) LIKE %s OR LOWER(brand) LIKE %s)"
+                for _ in patterns
+            )
+            where_clauses.append(
+                f"({model_checks})"
+            )
+            for pattern in patterns:
+                params.extend([pattern, pattern, pattern])
 
     if brand:
         where_clauses.append("LOWER(brand) = LOWER(%s)")
@@ -424,6 +431,31 @@ def _search_models(q: str | None, brand: str | None, limit: int) -> list[dict[st
         with connection.cursor() as cursor:
             cursor.execute(sql, params)
             return list(cursor.fetchall())
+
+
+def _search_query_aliases(q: str) -> list[str]:
+    cleaned = re.sub(r"\s+", " ", str(q or "").casefold()).strip()
+    if not cleaned:
+        return []
+
+    aliases = [cleaned]
+
+    # Google watches are often searched as "Google Watch", while the product line is "Pixel Watch".
+    without_google = re.sub(r"\bgoogle\b", " ", cleaned)
+    without_google = re.sub(r"\s+", " ", without_google).strip()
+    if without_google and without_google not in aliases:
+        aliases.append(without_google)
+
+    for value in list(aliases):
+        if re.search(r"\bwatch\s+\d+\b", value) and "pixel watch" not in value:
+            aliases.append(re.sub(r"\bwatch\s+(\d+)\b", r"pixel watch \1", value))
+
+    result: list[str] = []
+    for value in aliases:
+        value = re.sub(r"\s+", " ", value).strip()
+        if value and value not in result:
+            result.append(value)
+    return result
 
 
 def _build_main_variant(
